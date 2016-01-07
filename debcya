@@ -24,13 +24,16 @@ class State:
             yield p
 
     @classmethod
-    def save(outfile):
+    def save(cls, outfile):
         with io.open(outfile, "wt") as fd:
             cache = apt.Cache()
 
             for pkg in cache:
                 ver = pkg.installed
                 if ver is None: continue
+
+                if not ver.sha1:
+                    log.warn("%s_%s_%s has no sha1 information", pkg.name, ver.version, ver.architecture)
 
                 print(json.dumps({
                     "name": pkg.name,
