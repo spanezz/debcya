@@ -1,0 +1,87 @@
+#!/usr/bin/python3
+
+import apt
+import json
+import argparse
+import sys
+import io
+import requests
+import hashlib
+import logging
+
+log = logging.getLogger()
+
+class State:
+    def __init__(self, fname):
+        self.pkgs = []
+        with io.open(fname, "rt") as fd:
+            for line in fd:
+                self.pkgs.append(json.loads(line))
+
+    def by_source_name(self, name):
+        for p in self.pkgs:
+            if p["source"] != name: continue
+            yield p
+
+    @classmethod
+    def save(outfile):
+        with io.open(outfile, "wt") as fd:
+            cache = apt.Cache()
+
+            for pkg in cache:
+                ver = pkg.installed
+                if ver is None: continue
+
+                print(json.dumps({
+                    "name": pkg.name,
+                    "arch": ver.architecture,
+                    "ver": ver.version,
+                    "sha1": ver.sha1,
+                    "sha256": ver.sha256,
+                    "source": ver.source_name,
+                }), file=fd)
+
+
+def get_state(args):
+    if not args.state:
+        log.error("Please use --state to select a saved state")
+        sys.exit(1)
+    return State(args.state)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="take note of package status before an upgrade"
+                    " and help with downgrading if something went wrong.")
+    parser.add_argument("--save", action="store", help="save the current system state in the given file (run this before an upgrade)")
+    parser.add_argument("--state", action="store", help="load saved state from the given file")
+    parser.add_argument("--debs", action="store_true", help="get .deb files given a source pakcage")
+    parser.add_argument("--verbose", action="store_true", help="verbose output")
+    parser.add_argument("args", nargs="*", help="arguments for --debs")
+
+    args = parser.parse_args()
+
+    FORMAT = "%(levelname)s %(message)s"
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=FORMAT)
+    else:
+        logging.basicConfig(level=logging.WARN, stream=sys.stderr, format=FORMAT)
+
+    if args.save:
+        State.save(args.save)
+    elif args.debs:
+        state = get_state(args)
+        s = requests.Session()
+        for name in args.args:
+            for p in state.by_source_name(name):
+                url = "http://snapshot.debian.org/file/{sha1}".format(**p)
+                dest = "{name}_{ver}_{arch}.deb".format(**p)
+                log.info("Downloading %s into %s", url, dest)
+                r = s.get(url)
+                sha256 = hashlib.sha256(r.content).hexdigest()
+                if sha256 != p["sha256"]:
+                    log.warn("Sha256 mismatch on %s / %s", url, dest)
+                else:
+                    with io.open(dest, "wb") as fd:
+                        fd.write(r.content)
+
