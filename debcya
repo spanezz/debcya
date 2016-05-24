@@ -42,7 +42,7 @@ class State:
                     "sha1": ver.sha1,
                     "sha256": ver.sha256,
                     "source": ver.source_name,
-                }), file=fd)
+                }, sort_keys=True), file=fd)
 
 
 def get_state(args):
